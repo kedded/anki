@@ -1,7 +1,7 @@
-const V = 'recall-v1';
+const V = 'recall-v2';
 const SHELL = ['./', 'index.html', 'style.css', 'engine.js', 'app.js', 'manifest.json',
-  'vendor/jszip.min.js', 'vendor/fzstd.js', 'vendor/sql-wasm.js', 'vendor/sql-wasm.wasm',
-  'icons/icon-192.png', 'icons/icon-512.png', 'icons/apple-touch-icon.png'];
+  'jszip.min.js', 'fzstd.js', 'sql-wasm.js', 'sql-wasm.wasm',
+  'icon-192.png', 'icon-512.png', 'apple-touch-icon.png'];
 self.addEventListener('install', e => { e.waitUntil(caches.open(V).then(c => c.addAll(SHELL)).then(() => self.skipWaiting())); });
 self.addEventListener('activate', e => {
   e.waitUntil(caches.keys().then(ks => Promise.all(ks.filter(k => k !== V).map(k => caches.delete(k)))).then(() => self.clients.claim()));

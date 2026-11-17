@@ -183,7 +183,7 @@ R.resolveCss = async function (css, imp) {
 
 /* ---------------- import ---------------- */
 R.SQL = null;
-R.initSQL = async () => (R.SQL = R.SQL || await initSqlJs({ locateFile: f => 'vendor/' + f }));
+R.initSQL = async () => (R.SQL = R.SQL || await initSqlJs({ locateFile: f => f }));
 const sha1hex = async (u8) => [...new Uint8Array(await crypto.subtle.digest('SHA-1', u8))].map(b => b.toString(16).padStart(2, '0')).join('');
 const isZstd = (u) => u.length > 4 && u[0] === 0x28 && u[1] === 0xB5 && u[2] === 0x2F && u[3] === 0xFD;
 
