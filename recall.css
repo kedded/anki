@@ -101,8 +101,22 @@ input[type=checkbox]{width:18px;height:18px;accent-color:var(--accent);flex:none
 .rate .r1{color:var(--learn)}.rate .r2{color:var(--hard)}.rate .r3{color:var(--ok)}.rate .r4{color:var(--new)}
 .done{margin:auto;text-align:center;padding:24px;max-width:380px;width:100%}
 .done h2{margin:10px 0 6px;font-size:24px}.done p{color:var(--mute);margin:0 0 18px}
-.done .big{font-size:52px}
+.done .emo{font-size:52px}
 .done .btn{margin-bottom:10px}
 
 body.standalone .wrap{padding:calc(16px + env(safe-area-inset-top)) 16px calc(30px + env(safe-area-inset-bottom))}
 body.standalone .study{padding-top:calc(6px + env(safe-area-inset-top))}
+
+/* love screen + fireworks (same as Flanna) */
+.hide{display:none!important}
+.love{position:fixed;inset:0;z-index:70;background:rgba(12,8,24,.92);display:flex;align-items:center;justify-content:center;padding:24px;text-align:center;animation:lfade .4s ease}
+.love canvas{position:absolute;inset:0;width:100%;height:100%;pointer-events:none}
+.love-box{position:relative;color:#fff;max-width:420px}
+.love-t{font-size:27px;line-height:1.25;font-weight:700;text-shadow:0 0 18px rgba(255,90,150,.8),0 0 40px rgba(255,90,150,.5);animation:lpop .7s cubic-bezier(.2,1.4,.4,1) both}
+.love-n{margin-top:16px;font-size:14px;opacity:.75}
+.love-g{margin-top:10px;font-size:16px;font-weight:600;color:#ffd77a}
+.love .btn{margin-top:22px;background:#e0527f;color:#fff}
+@keyframes lfade{from{opacity:0}to{opacity:1}}
+@keyframes lpop{0%{transform:scale(.5);opacity:0}60%{transform:scale(1.1);opacity:1}100%{transform:scale(1)}}
+@media (prefers-reduced-motion:reduce){.love,.love-t{animation:none}}
+.lovehead{text-align:center;font-weight:700;font-size:19px;color:#e0527f;margin:4px 0 14px}

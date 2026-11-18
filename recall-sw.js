@@ -1,4 +1,4 @@
-const V = 'recall-v4';
+const V = 'recall-v5';
 const SHELL = ['./', 'index.html', 'recall.css', 'recall-engine.js', 'recall-app.js', 'manifest.json',
   'jszip.min.js', 'fzstd.js', 'sql-wasm.js', 'sql-wasm.wasm', 'icon-192.png', 'icon-512.png', 'apple-touch-icon.png'];
 self.addEventListener('install', e => {

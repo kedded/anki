@@ -33,7 +33,7 @@ async function renderHome(keepTab) {
   const [decks, sched, logs, extra, lastBackup] = await Promise.all([R.db.getAll('decks'), R.db.getAll('sched'), R.db.getAll('revlog'), R.getExtra(), R.db.get('meta', 'lastBackup')]);
   home = { decks, sched, logs, extra, lastBackup, now, today };
   const total = sched.length;
-  $app.innerHTML = `<div class="wrap"><h1>Anki</h1><p class="sub">Import Anki decks and study them offline · ${total} cards</p>
+  $app.innerHTML = `<div class="wrap"><div class="lovehead">Səni çox sevirəm, Jalə ❤️</div><h1>Anki</h1><p class="sub">Import Anki decks and study them offline · ${total} cards</p>
     <div class="tabs" id="tabs">
       <button data-tab="practice">Practice</button><button data-tab="list">Word list</button><button data-tab="progress">Progress</button>
     </div><div id="tabbody"></div></div>`;
@@ -444,6 +444,7 @@ async function commit(prev, n, rating) {
   await R.db.put('sched', n);
   const key = await R.db.add('revlog', { card: n.id, deck: n.deck, time: now, rating, prev: prev.state, ivl: n.ivl, ms: now - session.t0 });
   session.undo = { prev, key };
+  session.newAnswers = (session.newAnswers || 0) + 1;
   nextCard();
 }
 async function answer(rating) {
@@ -466,7 +467,7 @@ async function undo() {
   await R.db.put('sched', u.prev); await R.db.del('revlog', u.key);
   if (u.prev.state === 0) session.introduced--;
   if (u.prev.state === 2) session.reviewed--;
-  session.answered--; session.undo = null;
+  session.answered--; session.undo = null; session.newAnswers = Math.max(0, (session.newAnswers || 1) - 1);
   const { counts } = pickNext();
   session.cur = u.prev; session.showing = 'q'; session.t0 = Date.now();
   session.introCard = !!(S.intro && u.prev.state === 0);
@@ -476,7 +477,7 @@ async function undo() {
 function renderDone(counts) {
   session.cur = null;
   const btn = (id, txt) => `<button class="btn ${id === 'home' ? 'ghost' : ''} big" id="${id}">${txt}</button>`;
-  $app.innerHTML = studyShell(counts) + `<div class="done"><div class="big">🎉</div><h2>All done for now</h2>
+  $app.innerHTML = studyShell(counts) + `<div class="done"><div class="emo">🎉</div><h2>All done for now</h2>
     <p>${session.answered ? `You reviewed ${session.answered} card${session.answered === 1 ? '' : 's'} today.` : 'Nothing is due right now.'}</p>
     ${counts.totalNew > 0 ? btn('more10', 'Add 10 more new cards') + btn('more20', 'Add 20 more new cards') : ''}
     ${counts.extraRev > 0 ? btn('moreR', `Add 50 more reviews (${counts.extraRev} waiting)`) : ''}
@@ -485,6 +486,7 @@ function renderDone(counts) {
   document.getElementById('s-back').onclick = () => renderHome('practice');
   document.getElementById('home').onclick = () => renderHome('practice');
   document.getElementById('s-undo').onclick = undo;
+  if (session.newAnswers > 0) { session.newAnswers = 0; celebrate(); }
   const addMore = async (n, r) => { await R.addExtra(session.path, n, r); session.extraNew += n; session.extraRev += r; nextCard(); };
   const g = (id) => document.getElementById(id);
   if (g('more10')) g('more10').onclick = () => addMore(10, 0);
@@ -507,6 +509,80 @@ function onKey(e) {
   if ((e.key === 'z' || e.key === 'Z') && session.undo) undo();
 }
 document.addEventListener('keydown', onKey);
+
+
+/* ================= LOVE + FIREWORKS (same messages as Flanna) ================= */
+const LOVE_MSGS = [
+  'Səni çox sevirəm, Jalə ❤️',
+  'Yaxşı ki, varsan, Jalə ❤️',
+  'Hər gün arzuna bir az daha yaxınlaşırsan, gələcək həkimim.',
+  'Səninlə fəxr edirəm, Jalə!'
+];
+const FX = (() => {
+  let cv = null, ctx = null, parts = [], hearts = [], raf = 0, timers = [], W = 0, H = 0;
+  function size() { const dpr = Math.min(2, window.devicePixelRatio || 1); W = innerWidth; H = innerHeight; cv.width = W * dpr; cv.height = H * dpr; ctx.setTransform(dpr, 0, 0, dpr, 0, 0); }
+  const HUES = [335, 350, 45, 50, 285, 195, 15];
+  function burst(x, y, big) {
+    const hue = HUES[Math.random() * HUES.length | 0], n = big ? 90 : 60;
+    for (let i = 0; i < n; i++) {
+      const ang = Math.PI * 2 * i / n + Math.random() * .15, v = (big ? 5.2 : 3.8) * (.45 + Math.random() * .6);
+      parts.push({ x, y, vx: Math.cos(ang) * v, vy: Math.sin(ang) * v, life: 1, dec: .008 + Math.random() * .01, h: hue + Math.random() * 24 - 12, r: 1.5 + Math.random() * 1.5 });
+    }
+  }
+  function frame() {
+    ctx.globalCompositeOperation = 'destination-out'; ctx.fillStyle = 'rgba(0,0,0,.2)'; ctx.fillRect(0, 0, W, H);
+    ctx.globalCompositeOperation = 'lighter';
+    parts = parts.filter(p => p.life > 0);
+    for (const p of parts) {
+      p.x += p.vx; p.y += p.vy; p.vx *= .985; p.vy = p.vy * .985 + .045; p.life -= p.dec;
+      ctx.fillStyle = `hsla(${p.h},100%,65%,${Math.max(0, p.life)})`; ctx.beginPath(); ctx.arc(p.x, p.y, p.r, 0, 7); ctx.fill();
+    }
+    ctx.globalCompositeOperation = 'source-over';
+    hearts = hearts.filter(t => t.y > -40);
+    for (const t of hearts) { t.y += t.vy; t.x += Math.sin((t.y + t.ph) / 28) * .6; ctx.globalAlpha = .85; ctx.font = t.sz + 'px serif'; ctx.fillText('❤️', t.x, t.y); }
+    ctx.globalAlpha = 1;
+    if (parts.length || hearts.length || timers.length) raf = requestAnimationFrame(frame); else raf = 0;
+  }
+  function start(canvas, big) {
+    cv = canvas; ctx = cv.getContext('2d'); stop(); size(); ctx.clearRect(0, 0, W, H);
+    const nb = big ? 16 : 8, gap = big ? 380 : 450;
+    for (let i = 0; i < nb; i++) timers.push(setTimeout(() => { burst(W * (.15 + Math.random() * .7), H * (.12 + Math.random() * .42), big); timers.shift(); }, 150 + i * gap));
+    const nh = big ? 22 : 12;
+    for (let i = 0; i < nh; i++) hearts.push({ x: Math.random() * W, y: H + 20 + Math.random() * H * .8, vy: -(.9 + Math.random() * 1.4), ph: Math.random() * 100, sz: 16 + Math.random() * 18 | 0 });
+    raf = requestAnimationFrame(frame);
+  }
+  function stop() { timers.forEach(clearTimeout); timers = []; parts = []; hearts = []; if (raf) cancelAnimationFrame(raf); raf = 0; if (ctx) ctx.clearRect(0, 0, W, H); }
+  addEventListener('resize', () => { if (raf && cv) size(); });
+  return { start, stop };
+})();
+let loveAt = 0, lastSub = -1, celT = null;
+function celebrate() {
+  clearTimeout(celT);
+  celT = setTimeout(async () => {
+    const today = R.dayStart(); const t = R.dayStats(await R.db.revlogSince(today)).get(today) || { n: 0, ms: 0 };
+    const both = t.n >= S.goalCards && t.ms >= S.goalMin * 60000;
+    let i; do { i = Math.random() * LOVE_MSGS.length | 0; } while (i === lastSub && LOVE_MSGS.length > 1); lastSub = i;
+    let ov = document.getElementById('love'); if (ov) ov.remove();
+    ov = document.createElement('div'); ov.id = 'love'; ov.className = 'love'; ov.setAttribute('role', 'dialog'); ov.setAttribute('aria-label', 'Message for Jalə');
+    ov.innerHTML = `<canvas id="fx"></canvas><div class="love-box"><div class="love-t"></div>${both ? '<div class="love-g">🎆 Both daily goals done! 🎆</div>' : ''}
+      <div class="love-n"></div><button class="btn" id="loveOk">Davam et</button></div>`;
+    ov.querySelector('.love-t').textContent = LOVE_MSGS[i];
+    ov.querySelector('.love-n').textContent = `Today: ${t.n} / ${S.goalCards} cards · ${Math.floor(t.ms / 60000)} / ${S.goalMin} min`;
+    document.body.appendChild(ov); loveAt = Date.now();
+    ov.querySelector('#loveOk').onclick = closeLove;
+    ov.addEventListener('click', ev => { if (ev.target === ov || ev.target.tagName === 'CANVAS') closeLove(); });
+    if (!matchMedia('(prefers-reduced-motion: reduce)').matches) FX.start(ov.querySelector('#fx'), both);
+    setTimeout(() => { const b = ov.querySelector('#loveOk'); if (b) b.focus(); }, 50);
+  }, 450);
+}
+function closeLove() {
+  if (Date.now() - loveAt < 900) return;
+  const ov = document.getElementById('love'); if (ov) ov.remove(); FX.stop();
+  if (view === 'home') renderHome(tab);
+}
+document.addEventListener('keydown', ev => {
+  if (document.getElementById('love') && (ev.key === 'Escape' || ev.key === 'Enter' || ev.key === ' ') && !ev.repeat) { ev.preventDefault(); ev.stopPropagation(); closeLove(); }
+}, true);
 
 /* ================= boot ================= */
 (async () => {
