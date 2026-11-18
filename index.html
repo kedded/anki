@@ -4,24 +4,25 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <title>Recall</title>
-<meta name="theme-color" content="#0f766e">
-<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="theme-color" content="#2f5d50">
 <meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="Recall">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <link rel="manifest" href="manifest.json">
 <link rel="icon" href="icon-192.png">
 <link rel="apple-touch-icon" href="apple-touch-icon.png">
-<link rel="stylesheet" href="style.css?v=3">
+<link rel="stylesheet" href="recall.css?v=4">
 </head>
-<body>
+<body class="standalone">
 <div id="app"></div>
 <div id="toast" role="status"></div>
 <input id="file" type="file" accept=".apkg,.colpkg,.zip" multiple hidden>
+<input id="rfile" type="file" accept=".json,.zip,application/json,application/zip" hidden>
 <script src="jszip.min.js"></script>
 <script src="fzstd.js"></script>
 <script src="sql-wasm.js"></script>
-<script src="recall-engine.js?v=3"></script>
-<script src="recall-app.js?v=3"></script>
+<script src="recall-engine.js?v=4"></script>
+<script src="recall-app.js?v=4"></script>
 </body>
 </html>

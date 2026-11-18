@@ -13,17 +13,17 @@ R.db = {
   open() {
     if (this._db) return Promise.resolve(this._db);
     return new Promise((res, rej) => {
-      const rq = indexedDB.open('recall', 1);
+      const rq = indexedDB.open('recall', 2);
       rq.onupgradeneeded = () => {
-        const d = rq.result;
-        d.createObjectStore('decks', { keyPath: 'id' });
-        d.createObjectStore('cards', { keyPath: 'id' });
-        d.createObjectStore('sched', { keyPath: 'id' }).createIndex('deck', 'deck');
-        d.createObjectStore('models', { keyPath: 'key' });
-        d.createObjectStore('media');
-        d.createObjectStore('meta');
-        d.createObjectStore('revlog', { autoIncrement: true }).createIndex('time', 'time');
-        d.createObjectStore('imports', { keyPath: 'hash' });
+        const d = rq.result, tx = rq.transaction;
+        const mk = (n, o) => (d.objectStoreNames.contains(n) ? tx.objectStore(n) : d.createObjectStore(n, o));
+        const idx = (st, n, k) => { if (!st.indexNames.contains(n)) st.createIndex(n, k); };
+        mk('decks', { keyPath: 'id' });
+        idx(mk('cards', { keyPath: 'id' }), 'deck', 'deck');
+        idx(mk('sched', { keyPath: 'id' }), 'deck', 'deck');
+        mk('models', { keyPath: 'key' }); mk('media'); mk('meta');
+        idx(mk('revlog', { autoIncrement: true }), 'time', 'time');
+        mk('imports', { keyPath: 'hash' });
       };
       rq.onsuccess = () => { this._db = rq.result; res(this._db); };
       rq.onerror = () => rej(rq.error);
@@ -50,6 +50,16 @@ R.db = {
   async revlogSince(t) {
     const d = await this.open();
     return this._req(d.transaction('revlog').objectStore('revlog').index('time').getAll(IDBKeyRange.lowerBound(t)));
+  },
+  addMany(store, items) { return this._tx([store], 'readwrite', tx => { const s = tx.objectStore(store); items.forEach(i => s.add(i)); }); },
+  async getByIndex(store, index, key) { const d = await this.open(); return this._req(d.transaction(store).objectStore(store).index(index).getAll(IDBKeyRange.only(key))); },
+  async metaAll() {
+    const d = await this.open();
+    return new Promise((res, rej) => {
+      const out = []; const rq = d.transaction('meta').objectStore('meta').openCursor();
+      rq.onsuccess = () => { const c = rq.result; if (c) { out.push([c.key, c.value]); c.continue(); } else res(out); };
+      rq.onerror = () => rej(rq.error);
+    });
   },
   async mediaKeys() { const d = await this.open(); return this._req(d.transaction('media').objectStore('media').getAllKeys()); },
 };
@@ -183,7 +193,7 @@ R.resolveCss = async function (css, imp) {
 
 /* ---------------- import ---------------- */
 R.SQL = null;
-R.VERSION = '3';
+R.VERSION = '4';
 R.initSQL = async () => {
   if (R.SQL) return R.SQL;
   let bin = null, last = '';
@@ -314,6 +324,9 @@ R.importApkg = async function (file, progress = () => {}) {
   }
   if (pairs.length) await R.db.putManyKeyed('media', pairs);
   await R.db.put('imports', { hash, imp, name: file.name, time: Date.now(), cards: seq });
+  const pend = await R.db.get('meta', 'pending:' + hash);
+  if (pend) { await R.applyProgress(imp, pend); await R.db.del('meta', 'pending:' + hash); }
+  try { if (navigator.storage && navigator.storage.persist) navigator.storage.persist(); } catch (err) { /* ignore */ }
   return { imp, cards: seq, decks: Object.keys(usedDecks).length, media: idxs.length };
 };
 
@@ -342,12 +355,15 @@ R.deleteDecks = async function (deckIds) {
 };
 
 /* ---------------- scheduler ---------------- */
-R.DEFAULTS = { newPerDay: 20, revPerDay: 200, steps: [1, 10], relearn: [10], autoplay: true };
+R.DEFAULTS = { newPerDay: 20, revPerDay: 500, steps: [1, 10], relearn: [10], autoplay: true, rate3: false, intro: false, goalCards: 50, goalMin: 20 };
 
-R.reviewIvls = (c) => {
-  const hard = Math.max(c.ivl + 1, Math.round(c.ivl * 1.2));
-  const good = Math.max(hard + 1, Math.round(c.ivl * c.ease));
-  const easy = Math.max(good + 1, Math.round(c.ivl * c.ease * 1.3));
+R.reviewIvls = (c, now = Date.now()) => {
+  // reviewing early: base the new interval on how long the card has really been waiting
+  const early = Math.max(0, Math.round((c.due - R.dayStart(now)) / R.DAY));
+  const base = Math.max(1, c.ivl - early);
+  const hard = Math.max(base + 1, Math.round(base * 1.2));
+  const good = Math.max(hard + 1, Math.round(base * c.ease));
+  const easy = Math.max(good + 1, Math.round(base * c.ease * 1.3));
   return { 2: hard, 3: good, 4: easy };
 };
 
@@ -360,7 +376,7 @@ R.schedule = function (c, rating, now, S) {
       n.lapses = c.lapses + 1; n.ease = Math.max(1.3, c.ease - 0.2); n.ivl = 1;
       n.state = 3; n.step = 0; n.due = now + S.relearn[0] * 60000;
     } else {
-      const iv = R.reviewIvls(c);
+      const iv = R.reviewIvls(c, now);
       n.ease = rating === 2 ? Math.max(1.3, c.ease - 0.15) : rating === 4 ? c.ease + 0.15 : c.ease;
       grad(iv[rating]);
     }
@@ -406,3 +422,123 @@ R.countDeck = (list, now, introducedToday, reviewedToday, S) => {
 };
 
 R.getSettings = async () => ({ ...R.DEFAULTS, ...((await R.db.get('meta', 'settings')) || {}) });
+
+
+/* ---------------- stats, extra limits ---------------- */
+R.dayStats = (logs) => {
+  const m = new Map();
+  for (const l of logs) {
+    const d = R.dayStart(l.time); const o = m.get(d) || { n: 0, ms: 0 };
+    o.n++; o.ms += Math.min(l.ms || 0, 60000); m.set(d, o);
+  }
+  return m;
+};
+R.streaks = (m, goalN, goalMin, today) => {
+  const run = (ok) => {
+    let s = 0, d = today;
+    if (!(m.has(d) && ok(m.get(d)))) d = R.dayStart(d - 1);
+    while (m.has(d) && ok(m.get(d))) { s++; d = R.dayStart(d - 1); }
+    return s;
+  };
+  return { cards: run(o => o.n >= goalN), time: run(o => o.ms >= goalMin * 60000) };
+};
+R.getExtra = async () => {
+  const x = await R.db.get('meta', 'extra');
+  return x && x.day === R.dayStart() ? x.map : {};
+};
+R.addExtra = async (path, n, r) => {
+  const map = await R.getExtra(); const o = map[path] || { n: 0, r: 0 };
+  map[path] = { n: o.n + n, r: o.r + r };
+  await R.db.put('meta', { day: R.dayStart(), map }, 'extra');
+  return map[path];
+};
+
+/* ---------------- backup / restore ---------------- */
+const keyOf = (id) => { const i = id.indexOf(':'); return [id.slice(0, i), id.slice(i + 1)]; };
+
+R.exportProgress = async () => {
+  const [imports, sched, logs, settings] = await Promise.all([R.db.getAll('imports'), R.db.getAll('sched'), R.db.getAll('revlog'), R.db.get('meta', 'settings')]);
+  const hashOf = {}; imports.forEach(i => { hashOf[i.imp] = i; });
+  const pkgs = {};
+  const pk = (imp) => { const i = hashOf[imp]; if (!i) return null; return (pkgs[i.hash] = pkgs[i.hash] || { name: i.name, s: [], l: [] }); };
+  for (const c of sched) {
+    if (c.state === 0 && !c.reps) continue;
+    const [imp, cid] = keyOf(c.id); const p = pk(imp); if (!p) continue;
+    p.s.push([cid, c.state, c.due, c.ivl, c.ease, c.reps, c.lapses, c.step, c.intro]);
+  }
+  for (const l of logs) {
+    const [imp, cid] = keyOf(l.card); const p = pk(imp); if (!p) continue;
+    p.l.push([cid, keyOf(l.deck)[1], l.time, l.rating, l.prev, l.ivl || 0, l.ms || 0]);
+  }
+  return { app: 'recall-progress', v: 1, time: Date.now(), settings: settings || null, pkgs };
+};
+
+R.applyProgress = async (imp, p) => {
+  const all = await R.db.getAll('sched');
+  const have = new Map(); const prefix = imp + ':';
+  for (const c of all) if (c.id.startsWith(prefix)) have.set(c.id, c);
+  const upd = [];
+  for (const e of p.s) {
+    const cur = have.get(prefix + e[0]); if (!cur) continue;
+    upd.push({ ...cur, state: e[1], due: e[2], ivl: e[3], ease: e[4], reps: e[5], lapses: e[6], step: e[7], intro: e[8] });
+  }
+  for (let i = 0; i < upd.length; i += 500) await R.db.putMany('sched', upd.slice(i, i + 500));
+  await R.addLogsDedup(p.l.map(e => ({ card: prefix + e[0], deck: prefix + e[1], time: e[2], rating: e[3], prev: e[4], ivl: e[5], ms: e[6] })));
+  return upd.length;
+};
+R.addLogsDedup = async (logs) => {
+  if (!logs.length) return;
+  const seen = new Set((await R.db.getAll('revlog')).map(l => l.card + '|' + l.time));
+  const fresh = logs.filter(l => !seen.has(l.card + '|' + l.time));
+  for (let i = 0; i < fresh.length; i += 1000) await R.db.addMany('revlog', fresh.slice(i, i + 1000));
+};
+R.restoreProgress = async (data) => {
+  if (!data || data.app !== 'recall-progress') throw new Error('This is not a Recall progress backup.');
+  const imports = await R.db.getAll('imports'); const impOf = {}; imports.forEach(i => { impOf[i.hash] = i.imp; });
+  let applied = 0, waiting = 0;
+  for (const [hash, p] of Object.entries(data.pkgs || {})) {
+    if (impOf[hash]) { await R.applyProgress(impOf[hash], p); applied++; }
+    else { await R.db.put('meta', p, 'pending:' + hash); waiting++; }
+  }
+  if (data.settings) await R.db.put('meta', { ...(await R.getSettings()), ...data.settings }, 'settings');
+  return { applied, waiting };
+};
+
+R.exportFull = async (progress = () => {}) => {
+  const zip = new JSZip();
+  zip.file('manifest.json', JSON.stringify({ app: 'recall-full', v: 1, time: Date.now() }));
+  for (const st of ['decks', 'cards', 'sched', 'models', 'imports', 'revlog']) {
+    progress('Collecting ' + st + '…'); zip.file(st + '.json', JSON.stringify(await R.db.getAll(st)));
+  }
+  zip.file('meta.json', JSON.stringify(await R.db.metaAll()));
+  const keys = await R.db.mediaKeys(); let n = 0;
+  for (const k of keys) {
+    zip.file('media/' + encodeURIComponent(k), await R.db.get('media', k), { binary: true });
+    if (++n % 50 === 0) { progress(`Collecting media… ${n}/${keys.length}`); await tick(); }
+  }
+  progress('Writing file…');
+  return zip.generateAsync({ type: 'blob', compression: 'STORE', streamFiles: true }, m => progress(`Writing file… ${Math.round(m.percent)}%`));
+};
+R.restoreFull = async (file, progress = () => {}) => {
+  const zip = await JSZip.loadAsync(file);
+  const man = zip.file('manifest.json');
+  if (!man || JSON.parse(await man.async('string')).app !== 'recall-full') throw new Error('This is not a Recall full backup.');
+  for (const st of ['decks', 'cards', 'sched', 'models', 'imports']) {
+    progress('Restoring ' + st + '…');
+    const arr = JSON.parse(await zip.file(st + '.json').async('string'));
+    for (let i = 0; i < arr.length; i += 500) await R.db.putMany(st, arr.slice(i, i + 500));
+  }
+  await R.addLogsDedup(JSON.parse(await zip.file('revlog.json').async('string')));
+  for (const [k, v] of JSON.parse(await zip.file('meta.json').async('string'))) await R.db.put('meta', v, k);
+  const files = Object.keys(zip.files).filter(n => n.startsWith('media/') && !zip.files[n].dir);
+  let pairs = [], done = 0;
+  for (const n of files) {
+    const key = decodeURIComponent(n.slice(6)); const ext = (key.split('.').pop() || '').toLowerCase();
+    const u = await zip.file(n).async('uint8array');
+    pairs.push([key, new Blob([u], { type: MIME[ext] || 'application/octet-stream' })]); done++;
+    if (pairs.length >= 200) { await R.db.putManyKeyed('media', pairs); pairs = []; progress(`Restoring media… ${done}/${files.length}`); await tick(); }
+  }
+  if (pairs.length) await R.db.putManyKeyed('media', pairs);
+  urlCache.clear();
+  return { media: files.length };
+};
